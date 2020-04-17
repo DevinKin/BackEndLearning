@@ -701,9 +701,9 @@ curl -X GET "localhost:9200/bank/_search?pretty" -H 'Content-Type: application/j
 
 一些聚合生成多个指标（如stat），称为多值数值指标聚合（multi-value numeric metrics aggregation）。
 
-以下采用的示例为[exams.json]()
+以下采用的示例为[exams.json](./exams.json)
 
-#### Avg聚合
+#### 平均聚合
 
 avg聚合是单值指标聚合，用于计算从聚合文档中提取的数值的平均值。这些数值可以从文档中的特定数字字段中提取，也可以由提供的脚本生成。
 
@@ -717,7 +717,7 @@ curl -X POST "localhost:9200/exams/_search?size=0&pretty" -H 'Content-Type: appl
 '
 ```
 
-#### 脚本
+##### 脚本
 
 根据脚本计算分数的平均值，这会将脚本参数解释为具有简便脚本语言且没有脚本参数的嵌入式脚本。
 
@@ -759,7 +759,7 @@ curl -X POST "localhost:9200/exams/_search?size=0&pretty" -H 'Content-Type: appl
 
 ```
 
-#### 值脚本
+##### 值脚本
 
 该考试远远超出了学生的水平，因此需要进行成绩更正。我们可以使用值脚本来获取新的平均值：
 
@@ -784,6 +784,27 @@ curl -X POST "localhost:9200/exams/_search?size=0&pretty" -H 'Content-Type: appl
 '
 
 ```
+
+##### 缺省值
+
+missing参数定义应如何处理缺省值的文档。默认情况下，它们将被忽略，但也可以将它们视为具有默认值。
+
+```shell
+curl -X POST "localhost:9200/exams/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "grade_avg" : {
+            "avg" : {
+                "field" : "grade",
+                "missing": 10 
+            }
+        }
+    }
+}
+'
+```
+
+#### 加权平均聚合
 
 
 
