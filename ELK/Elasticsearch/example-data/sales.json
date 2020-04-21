@@ -1,0 +1,17 @@
+{"index":{"_id":1}}
+{ "price" : 1000, "color" : "红色", "type":"电视", "brand" : "长虹", "sold_date" : "2016-10-28" }
+{"index":{"_id":2}}
+{ "price" : 2000, "color" : "红色", "type":"电视", "brand" : "长虹", "sold_date" : "2016-11-05" }
+{"index":{"_id":3}}
+{ "price" : 3000, "color" : "绿色", "type":"电视","brand" : "小米", "sold_date" : "2016-05-18" }
+{"index":{"_id":4}}
+{ "price" : 1500, "color" : "蓝色", "type":"电视", "brand" : "TCL", "sold_date" : "2016-07-02" }
+{"index":{"_id":5}}
+{ "price" : 1200, "color" : "绿色", "type":"电视", "brand" : "TCL", "sold_date" : "2016-08-19" }
+{"index":{"_id":6}}
+{ "price" : 2000, "color" : "红色", "type":"电视", "brand" : "长虹", "sold_date" : "2016-11-05" }
+{"index":{"_id":7}}
+{ "price" : 8000, "color" : "红色", "type":"手机", "brand" : "三星", "sold_date" : "2017-01-01" }
+{"index":{"_id":8}}
+{ "price" : 2500, "color" : "蓝色", "type":"手机", "brand" : "小米", "sold_date" : "2017-02-12" }
+

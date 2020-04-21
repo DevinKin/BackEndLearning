@@ -1,0 +1,14 @@
+{"index":{"_id":1}}
+{"type": "sale", "amount": 3.14}
+{"index":{"_id":2}}
+{"type": "sale", "amount": 3}
+{"index":{"_id":3}}
+{"type": "sale", "amount": 4 }
+{"index":{"_id":4}}
+{"type": "sale", "amount": 6 }
+{"index":{"_id":5}}
+{"type": "not sale", "amount": 10}
+{"index":{"_id":6}}
+{"type": "not sale", "amount": 1}
+{"index":{"_id":7}}
+{"type": "not sale", "amount": 2}
