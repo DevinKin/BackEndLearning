@@ -1723,6 +1723,898 @@ curl -X PUT "localhost:9200/child_example/_doc/1?pretty" -H 'Content-Type: appli
   ]
 }
 '
+```
+
+新建两个`answer`文档
+
+```shell
+curl -X PUT "localhost:9200/child_example/_doc/2?routing=1&pretty" -H 'Content-Type: application/json' -d'
+{
+  "join": {
+    "name": "answer",
+    "parent": "1"
+  },
+  "owner": {
+    "location": "Norfolk, United Kingdom",
+    "display_name": "Sam",
+    "id": 48
+  },
+  "body": "<p>Unfortunately you\u0027re pretty much limited to FTP...",
+  "creation_date": "2009-05-04T13:45:37.030"
+}
+'
+curl -X PUT "localhost:9200/child_example/_doc/3?routing=1&refresh&pretty" -H 'Content-Type: application/json' -d'
+{
+  "join": {
+    "name": "answer",
+    "parent": "1"
+  },
+  "owner": {
+    "location": "Norfolk, United Kingdom",
+    "display_name": "Troll",
+    "id": 49
+  },
+  "body": "<p>Use Linux...",
+  "creation_date": "2009-05-05T13:45:37.030"
+}
+'
 
 ```
+
+下面的示例返回顶部的问题标签，每个标签返回顶部的答案所有者
+
+```shell
+curl -X POST "localhost:9200/child_example/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+  "aggs": {
+    "top-tags": {
+      "terms": {
+        "field": "tags.keyword",
+        "size": 10
+      },
+      "aggs": {
+        "top-answers": {
+          "children": {
+            "type" : "answer" 
+          },
+          "aggs": {
+            "top-names": {
+              "terms": {
+                "field": "owner.display_name.keyword",
+                "size": 10
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+'
+
+```
+
+### 复合聚合
+
+复合聚合是一个多存储桶聚合，可以从不同的来源创建复合存储桶。
+
+与其他多存储桶聚合不同，复合聚合可用于从多级聚合有效分页所有桶。
+
+复合聚合提供了一种方式以流传输特定聚合的所有存储桶，类似于滚动对文档所做的操作。
+
+复合存储桶是根据为每个文档提取/创建的值的组合构建的，每个组合都被视为复合存储桶
+
+#### 值来源
+
+`sources`参数用于构建复合聚合桶的源。
+
+定义`sources`的顺序很重要，因为它还控制键的返回顺序。
+
+传递给`sources`的名称必须是唯一的，有以下三种不同类型的`sources`：
+
+- `terms`：其值源等效于简单`terms`聚合，这些值是从字段或脚本中提取的，就像`terms`“聚合”一样。也可以使用脚本来为复合存储桶创建值。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    { "product": { "terms" : { "field": "product" } } }
+                ]
+            }
+        }
+     }
+}
+'
+
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    {
+                        "product": {
+                            "terms" : {
+                                "script" : {
+                                    "source": "doc[\u0027product\u0027].value",
+                                    "lang": "painless"
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}
+'
+
+```
+
+#### 直方图
+
+`histogram`值源可以应用于数字值，以在这些值上建立固定的大小间隔。
+
+`interval`参数定义了如何转换数值。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    { "histo": { "histogram" : { "field": "price", "interval": 5 } } }
+                ]
+            }
+        }
+    }
+}
+'
+```
+
+#### 日期直方图
+
+`date_histogram`与`histogram`值源相似，但间隔由日期/时间表达式指定，可用的表达式间隔为
+
+- year
+- quarter
+- month
+- week
+- day
+- hour
+- minute
+- second
+
+`format`参数可以指定输出格式化的日期。
+
+`time_zone`参数可用于指示存储段应使用其他时区。
+
+`offset`参数指定的正（+）或负偏移（-）持续时间更改每个存储桶的起始值。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    {
+                        "date": {
+                            "date_histogram" : {
+                                "field": "timestamp",
+                                "calendar_interval": "1d",
+                                "format": "yyyy-MM-dd" 
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    }
+}
+'
+
+```
+
+#### 混合不同的值源
+
+`sources`参数接收是一个值的数组，因此可以混合不同的值源来创建复合存储桶。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    { "date": { "date_histogram": { "field": "timestamp", "calendar_interval": "1d" } } },
+                    { "product": { "terms": {"field": "product" } } }
+                ]
+            }
+        }
+    }
+}
+'
+
+```
+
+#### 顺序
+
+默认情况下，复合存储桶按其自然顺序排序。值按其值的升序排序。
+
+当请求多个值源时，将对每个值源进行排序，将组合存储桶的第一个值与另一个组合存储桶的第一个值进行比较，如果它们相等，则将组合存储桶中的下一个值与另一个存储桶的下一个值继续比较。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    { "date": { "date_histogram": { "field": "timestamp", "calendar_interval": "1d", "order": "desc" } } },
+                    { "product": { "terms": {"field": "product", "order": "asc" } } }
+                ]
+            }
+        }
+    }
+}
+'
+```
+
+#### 缺失bucket
+
+默认情况下，将忽略没有给定源值的文档。可以设置`missing_bucket`为`true`包括那些没有给定值源的文档。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    { "product_name": { "terms" : { "field": "product", "missing_bucket": true } } }
+                ]
+            }
+        }
+     }
+}
+'
+```
+
+#### 大小
+
+`size`参数来定义应该返回多少个复合桶。
+
+#### 分页
+
+使用`after`参数可以检索下一页的结果集。为了获取下一页的结果集，可以传递返回值中`after_key`的内容。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "size": 2,
+                 "sources" : [
+                    { "date": { "date_histogram": { "field": "timestamp", "calendar_interval": "1d", "order": "desc" } } },
+                    { "product": { "terms": {"field": "product", "order": "asc" } } }
+                ],
+                "after": { "date": 1494288000000, "product": "mad max" } 
+            }
+        }
+    }
+}
+'
+```
+
+#### 提前终止
+
+为了获得最佳性能，应在索引上设置索引排序，以使其与组合聚合中的部分或全部源顺序匹配。
+
+复合聚合也将尝试尽早终止未排序的索引。
+
+先定义索引的数据结构
+
+```shell
+curl -X PUT "localhost:9200/twitter?pretty" -H 'Content-Type: application/json' -d'
+{
+    "settings" : {
+        "index" : {
+            "sort.field" : ["username", "timestamp"],   
+            "sort.order" : ["asc", "desc"]              
+        }
+    },
+    "mappings": {
+        "properties": {
+            "username": {
+                "type": "keyword",
+                "doc_values": true
+            },
+            "timestamp": {
+                "type": "date"
+            }
+        }
+    }
+}
+'
+
+```
+
+为了优化提早终止，建议将请求中的`track_total_hits`设置为`false`。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "track_total_hits": false,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                "sources" : [
+                    { "user_name": { "terms" : { "field": "user_name" } } },
+                    { "date": { "date_histogram": { "field": "timestamp", "calendar_interval": "1d", "order": "desc" } } }
+                ]
+            }
+        }
+     }
+}
+'
+```
+
+#### 子聚合
+
+复合聚合也可以拥有子聚合。这些子聚合可用于计算其他存储桶或有关此父聚合创建的每个复合存储桶的统计信息。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "my_buckets": {
+            "composite" : {
+                 "sources" : [
+                    { "date": { "date_histogram": { "field": "timestamp", "calendar_interval": "1d", "order": "desc" } } },
+                    { "product": { "terms": {"field": "product" } } }
+                ]
+            },
+            "aggregations": {
+                "the_avg": {
+                    "avg": { "field": "price" }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+#### 管道聚合
+
+复合聚合当前与管道聚合不兼容，在大多数情况下也没有意义。
+
+### 日期直方图聚合
+
+是多桶聚合，类似于正常的直方图聚合，但只能与日期或日期范围值一起使用。
+
+日期直方图聚合和普通直方图聚合的区别是：日期直方图聚合可以使用日期时间表达式。
+
+配置日期直方图聚合时，可以通过两种方式指定时间间隔：
+
+- 日历感知时间间隔：夏令时会更改特定日期的时间长度，月份会更改不同的天数，并且leap秒可用于特定年份。
+- 固定时间间隔：固定间隔始终是SI单位的倍数，并且不会根据日历环境而变化。
+
+#### 日历感知时间间隔
+
+可以使用`calendar_interval`参数设置日历间隔。日历间隔只能以单位的“单个”数量（1d，1M等）指定。指定，不支持`2d`等倍数，并且会引发异常。支持的单位值
+
+- minute
+- hour
+- day
+- week
+- month
+- quarter
+- year
+
+#### 固定时间间隔
+
+可以使用`fixed-interval`参数设置固定时间间隔。可以以任意多个受支持单位指定固定间隔。
+
+- seconds
+- minutes
+- hours
+- days
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "sales_over_time" : {
+            "date_histogram" : {
+                "field" : "date",
+                "fixed_interval" : "30d"
+            }
+        }
+    }
+}
+'
+```
+
+#### Keys
+
+日期表示为64位数字，表示自时间段以来的时间戳（以毫秒为单位）。这些时间戳作为存储桶的键名称返回。 `key_as_string`是使用`format`参数规范转换为格式化日期字符串的相同时间戳。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "sales_over_time" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "1M",
+                "format" : "yyyy-MM-dd" 
+            }
+        }
+    }
+}
+'
+
+```
+
+#### 时区
+
+日期时间在Elasticsearch中是以UTC形式存储的。使用`time-zone`参数表示存储桶应使用其他时区。
+
+```shell
+curl -X PUT "localhost:9200/my_index/_doc/1?refresh&pretty" -H 'Content-Type: application/json' -d'
+{
+  "date": "2015-10-01T00:30:00Z"
+}
+'
+curl -X PUT "localhost:9200/my_index/_doc/2?refresh&pretty" -H 'Content-Type: application/json' -d'
+{
+  "date": "2015-10-01T01:30:00Z"
+}
+'
+curl -X GET "localhost:9200/my_index/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+  "aggs": {
+    "by_day": {
+      "date_histogram": {
+        "field":     "date",
+        "calendar_interval":  "day",
+        "time_zone": "-01:00"
+      }
+    }
+  }
+}
+'
+
+
+```
+
+#### 偏移量
+
+使用offset参数以指定的正（+）或负偏移（-）时间段更改每个存储区的起始值，例如1h表示一个小时，或1d表示一天。
+
+```shell
+curl -X PUT "localhost:9200/my_index/_doc/1?refresh&pretty" -H 'Content-Type: application/json' -d'
+{
+  "date": "2015-10-01T05:30:00Z"
+}
+'
+curl -X PUT "localhost:9200/my_index/_doc/2?refresh&pretty" -H 'Content-Type: application/json' -d'
+{
+  "date": "2015-10-01T06:30:00Z"
+}
+'
+curl -X GET "localhost:9200/my_index/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+  "aggs": {
+    "by_day": {
+      "date_histogram": {
+        "field":     "date",
+        "calendar_interval":  "day",
+        "offset":    "+6h"
+      }
+    }
+  }
+}
+'
+
+```
+
+#### 键作为响应值
+
+将`keyed`标志设置为`true`会将唯一的字符串键与每个存储桶相关联，并以散列而不是数组的形式返回范围。
+
+### 日期范围聚合
+
+日期范围聚合的`from`和`to`参数都可以指定[日期数学表达式](https://www.elastic.co/guide/en/elasticsearch/reference/current/common-options.html#date-math)，使用`format`参数指定其输入格式。
+
+请注意，此聚合包括起始值，但不包括每个范围的起始值。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs": {
+        "range": {
+            "date_range": {
+                "field": "date",
+                "format": "MM-yyyy",
+                "ranges": [
+                    { "to": "now-10M/M" }, 
+                    { "from": "now-10M/M" } 
+                ]
+            }
+        }
+    }
+}
+'
+
+```
+
+#### 日期范围聚合中的时区
+
+通过指定`time_zone`参数，可以将日期从另一个时区转换为UTC。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+   "aggs": {
+       "range": {
+           "date_range": {
+               "field": "date",
+               "time_zone": "CET",
+               "ranges": [
+                  { "to": "2016/02/01" }, 
+                  { "from": "2016/02/01", "to" : "now/d" }, 
+                  { "from": "now/d" }
+              ]
+          }
+      }
+   }
+}
+'
+```
+
+### 多元化的采样器聚合
+
+和`sampler`聚合一样，这是一个过滤聚合，用于将任何子聚合的处理限制为得分最高的文档的样本。
+
+`field`和`script`参数用于提供用于重复数据删除的值。
+
+`max_docs_per_value`参数用于控制在一个共享相同值的任何分片上收集的最大文档数，默认值是1。
+
+如果选择`field`或`script`为单个文档产生多个值，则聚合将引发错误。
+
+想在StackOverflow论坛帖子上看到哪些标签与`#elasticsearch`密切相关，但忽略了一些多产用户的影响，这些用户倾向于将`#Kibana`误称为`#Cabana`。
+
+```shell
+curl -X POST "localhost:9200/stackoverflow/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "query": {
+        "query_string": {
+            "query": "tags:elasticsearch"
+        }
+    },
+    "aggs": {
+        "my_unbiased_sample": {
+            "diversified_sampler": {
+                "shard_size": 200,
+                "field" : "author"
+            },
+            "aggs": {
+                "keywords": {
+                    "significant_terms": {
+                        "field": "tags",
+                        "exclude": ["elasticsearch"]
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+`shard_size`参数限制在每个分片上处理的样本中收集了多少个得分最高的文档。
+
+可选的`execution_hint`参数设置可以影响重复数据删除值的管理。
+
+##### 限制
+
+- 不能嵌套在`breadth_first`聚合中使用
+- 有限的重复数据删除逻辑。
+- 没有专门的地理/日期字段语法
+
+#### 过滤聚合
+
+定义当前文档集上下文中与指定过滤器匹配的所有文档的单个存储桶。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "t_shirts" : {
+            "filter" : { "term": { "type": "t-shirt" } },
+            "aggs" : {
+                "avg_price" : { "avg" : { "field" : "price" } }
+            }
+        }
+    }
+}
+'
+```
+
+### 多过滤器聚合
+
+定义一个多存储桶聚合，其中每个存储桶都与一个过滤器相关联。每个存储桶将收集与其关联的过滤器匹配的所有文档。
+
+```shell
+curl -X PUT "localhost:9200/logs/_bulk?refresh&pretty" -H 'Content-Type: application/json' -d'
+{ "index" : { "_id" : 1 } }
+{ "body" : "warning: page could not be rendered" }
+{ "index" : { "_id" : 2 } }
+{ "body" : "authentication error" }
+{ "index" : { "_id" : 3 } }
+{ "body" : "warning: connection timed out" }
+'
+curl -X GET "localhost:9200/logs/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "size": 0,
+  "aggs" : {
+    "messages" : {
+      "filters" : {
+        "filters" : {
+          "errors" :   { "match" : { "body" : "error"   }},
+          "warnings" : { "match" : { "body" : "warning" }}
+        }
+      }
+    }
+  }
+}
+'
+```
+
+#### 匿名过滤器
+
+`filters`字段也可以提供过滤器数组作为参数，数组中的元素都是匿名过滤器。
+
+#### 其他存储桶
+
+`other_bucket`参数可以将不匹配任何给定过滤器的文档放置到一个存储桶后返回。
+
+- `false`不计算其他不匹配任何给定过滤器的文档的存储桶。
+- `true`返回不匹配任何给定过滤器的文档的存储桶。默认情况下命名为`_other_`，如果使用匿名过滤器，则返回最后一个存储桶。
+
+`other_bucket_key`参数可以指定其他不匹配任何给定过滤器的文档的存储桶的名称。
+
+```shell
+curl -X PUT "localhost:9200/logs/_doc/4?refresh&pretty" -H 'Content-Type: application/json' -d'
+{
+  "body": "info: user Bob logged out"
+}
+'
+curl -X GET "localhost:9200/logs/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "size": 0,
+  "aggs" : {
+    "messages" : {
+      "filters" : {
+        "other_bucket_key": "other_messages",
+        "filters" : {
+          "errors" :   { "match" : { "body" : "error"   }},
+          "warnings" : { "match" : { "body" : "warning" }}
+        }
+      }
+    }
+  }
+}
+'
+```
+
+### 地理距离聚合
+
+一个多存储桶聚合，作用在地理坐标字段，概念上和`range`聚合类似。
+
+聚合评估每个文档值到`origin`的距离，并根据范围确定它所属的存储桶（如果文档和原点之间的距离在存储桶的距离范围内，则文档属于存储桶）。
+
+`origin`参数指定原点坐标，支持[Geo-point 类型](https://www.elastic.co/guide/en/elasticsearch/reference/current/geo-point.html) 
+
+`distance`的单位默认是米，可以使用`unit`参数指定为
+
+- mi（miles）英里
+- in（inches）英寸
+- yd（yards）码
+- km（kilometers）千米
+- cm（centimeters）厘米
+- mm（millimeters）毫米
+
+```shell
+curl -X PUT "localhost:9200/museums?pretty" -H 'Content-Type: application/json' -d'
+{
+    "mappings": {
+        "properties": {
+            "location": {
+                "type": "geo_point"
+            }
+        }
+    }
+}
+'
+curl -X POST "localhost:9200/museums/_bulk?refresh&pretty" -H 'Content-Type: application/json' -d'
+{"index":{"_id":1}}
+{"location": "52.374081,4.912350", "name": "NEMO Science Museum"}
+{"index":{"_id":2}}
+{"location": "52.369219,4.901618", "name": "Museum Het Rembrandthuis"}
+{"index":{"_id":3}}
+{"location": "52.371667,4.914722", "name": "Nederlands Scheepvaartmuseum"}
+{"index":{"_id":4}}
+{"location": "51.222900,4.405200", "name": "Letterenhuis"}
+{"index":{"_id":5}}
+{"location": "48.861111,2.336389", "name": "Musée du Louvre"}
+{"index":{"_id":6}}
+{"location": "48.860000,2.327000", "name": "Musée d\u0027Orsay"}
+'
+curl -X POST "localhost:9200/museums/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "rings_around_amsterdam" : {
+            "geo_distance" : {
+                "field" : "location",
+                "origin" : "52.3760, 4.894",
+                "ranges" : [
+                    { "to" : 100000 },
+                    { "from" : 100000, "to" : 300000 },
+                    { "from" : 300000 }
+                ]
+            }
+        }
+    }
+}
+'
+```
+
+有两种距离计算方式，可以使用`distance_type`参数指定计算距离的方式：
+
+- `arc`：默认的距离计算方式，是最准确的。
+- `plane`：最快但最不准确的。
+
+### 地理哈希网格聚合
+
+是多桶聚合，适用于`geo_point`字段，将点分组到代表网格中单元的桶中。
+
+生成的网格可能是稀疏的，并且仅包含具有匹配数据的像元。每个单元格均使用用户可定义精度的`geohash`进行标记。
+
+高精度的地理哈希具有较长的字符串长度，代表仅覆盖较小区域的单元。
+
+低精度的地理哈希具有较短的字符串长度，代表每个单元都覆盖大面积的单元格。
+
+此聚合中使用的`geohash`可以在1到12之间选择精度，使用`precision`参数指定。
+
+指定的字段必须为`geo_point`类型（只能在mappings中显式设置），并且还可以包含geo_point字段数组，在这种情况下，将在聚合过程中考虑所有点。
+
+```shell
+curl -X PUT "localhost:9200/museums?pretty" -H 'Content-Type: application/json' -d'
+{
+    "mappings": {
+          "properties": {
+              "location": {
+                  "type": "geo_point"
+              }
+          }
+    }
+}
+'
+curl -X POST "localhost:9200/museums/_bulk?refresh&pretty" -H 'Content-Type: application/json' -d'
+{"index":{"_id":1}}
+{"location": "52.374081,4.912350", "name": "NEMO Science Museum"}
+{"index":{"_id":2}}
+{"location": "52.369219,4.901618", "name": "Museum Het Rembrandthuis"}
+{"index":{"_id":3}}
+{"location": "52.371667,4.914722", "name": "Nederlands Scheepvaartmuseum"}
+{"index":{"_id":4}}
+{"location": "51.222900,4.405200", "name": "Letterenhuis"}
+{"index":{"_id":5}}
+{"location": "48.861111,2.336389", "name": "Musée du Louvre"}
+{"index":{"_id":6}}
+{"location": "48.860000,2.327000", "name": "Musée d\u0027Orsay"}
+'
+curl -X POST "localhost:9200/museums/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggregations" : {
+        "large-grid" : {
+            "geohash_grid" : {
+                "field" : "location",
+                "precision" : 3
+            }
+        }
+    }
+}
+'
+```
+
+#### 高精度请求
+
+当请求详细的存储桶（通常用于显示“放大”的地图）时，应该使用诸如`geo_bounding_box`之类的过滤器来缩小主要区域，否则可能会创建并返回数百万个存储桶。
+
+```shell
+curl -X POST "localhost:9200/museums/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggregations" : {
+        "zoomed-in" : {
+            "filter" : {
+                "geo_bounding_box" : {
+                    "location" : {
+                        "top_left" : "52.4, 4.9",
+                        "bottom_right" : "52.3, 5.0"
+                    }
+                }
+            },
+            "aggregations":{
+                "zoom1":{
+                    "geohash_grid" : {
+                        "field": "location",
+                        "precision": 8
+                    }
+                }
+            }
+        }
+    }
+}
+'
+
+```
+
+#### 具有附加边界框过滤的请求
+
+`geohash_grid`聚合支持可选的`bounds`参数，该参数将考虑的点限制为所提供的边界内的点。
+
+`bounds`参数以与地理边界框查询中指定的边界相同的所有可[接受格式](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-geo-bounding-box-query.html#query-dsl-geo-bounding-box-query-accepted-formats)来接受边界框。
+
+### GeoTile网格聚合
+
+一个多存储桶聚合，作用在地理坐标字段，并将点分组为代表网格中单元格的桶。
+
+生成的网格可能是稀疏的，并且仅包含具有匹配数据的像元。
+
+每个单元格对应许多在线地图站点使用的地图图块。每个单元格均使用`{zoom} / {x} / {y}`格式标记，其中`zoom`等于用户指定的精度。使用`precision`参数指定精度，精度的范围为`0-29`
+
+- 高精度键的x和y范围较大，并且代表仅覆盖较小区域的图块。
+- 低精度键的x和y范围较小，并且代表各自覆盖较大面积的图块。
+
+低精度请求
+
+```shell
+curl -X POST "localhost:9200/museums/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggregations" : {
+        "large-grid" : {
+            "geotile_grid" : {
+                "field" : "location",
+                "precision" : 8
+            }
+        }
+    }
+}
+'
+
+```
+
+高精度请求和GetHash聚合类似，建议限定边界后使用聚合。
+
+### Global聚合
 
