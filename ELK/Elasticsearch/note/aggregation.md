@@ -2585,7 +2585,7 @@ curl -X POST "localhost:9200/museums/_search?size=0&pretty" -H 'Content-Type: ap
 
 `bounds`参数以与地理边界框查询中指定的边界相同的所有可[接受格式](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-geo-bounding-box-query.html#query-dsl-geo-bounding-box-query-accepted-formats)来接受边界框。
 
-### GeoTile网格聚合
+### 地理平铺网格聚合
 
 一个多存储桶聚合，作用在地理坐标字段，并将点分组为代表网格中单元格的桶。
 
@@ -2616,5 +2616,492 @@ curl -X POST "localhost:9200/museums/_search?size=0&pretty" -H 'Content-Type: ap
 
 高精度请求和GetHash聚合类似，建议限定边界后使用聚合。
 
-### Global聚合
+### 全局聚合
+
+在搜索执行上下文中定义**所有文档**的单存储桶聚合，不管其他聚合后搜索出什么结果，都会使用搜索执行上下文中的所有文档。
+
+全局聚合器只能作为顶级聚合器放置，因为将全局聚合器嵌入另一个存储桶聚合器中没有意义。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "query" : {
+        "match" : { "type" : "t-shirt" }
+    },
+    "aggs" : {
+        "all_products" : {
+            "global" : {}, 
+            "aggs" : { 
+                "avg_price" : { "avg" : { "field" : "price" } }
+            }
+        },
+        "t_shirts": { "avg" : { "field" : "price" } }
+    }
+}
+'
+```
+
+### 直方图聚合
+
+基于多存储桶值源的聚合，可以应用于从文档中提取的数值或数值范围值。
+
+文档对应的值落入存储桶的计算公式如下：`bucket_key=Math.floor((value - offset) / interval) * interval + offset`
+
+对于范围值，文档可以分为多个存储桶。
+
+`interval`参数必须是一个正数值，`offset`参数必须是一个在`[0,interval)`的数值。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "prices" : {
+            "histogram" : {
+                "field" : "price",
+                "interval" : 50
+            }
+        }
+    }
+}
+'
+```
+
+默认情况下，响应将用空桶填充直方图中的空白。由于`min_doc_count`，可以更改该请求并请求具有更高最小计数的存储桶。
+
+通过`extended_bounds`设置，你可以“强制”直方图聚合构建存储桶的范围，使用`min`和`max`参数指定存储桶构建的最小值和最大值，如果小于`min`还有对应范围的存储桶，则会显示该范围的存储桶，`max`同理。
+
+将直方图聚合嵌套在过滤器聚合中使用
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "query" : {
+        "constant_score" : { "filter": { "range" : { "price" : { "to" : "500" } } } }
+    },
+    "aggs" : {
+        "prices" : {
+            "histogram" : {
+                "field" : "price",
+                "interval" : 50,
+                "extended_bounds" : {
+                    "min" : 0,
+                    "max" : 500
+                }
+            }
+        }
+    }
+}
+'
+```
+
+#### 偏移量
+
+默认情况下，存储桶键从0开始，然后以`interval`相等的间隔继续。
+
+存储桶的边界可以使用`offset`选项进行移动。
+
+### IP范围聚合
+
+和日期范围聚合类似，IP范围聚合作用在`IP`类型字段。
+
+可以使用`key`参数自定义输出结果的键。
+
+```shell
+curl -X GET "localhost:9200/ip_addresses/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs": {
+        "ip_ranges": {
+            "ip_range": {
+                "field": "ip",
+                "ranges": [
+                    { "key": "infinity", "to" : "10.0.0.5" },
+                    { "key": "and-beyond", "from" : "10.0.0.5" }
+                ],
+                "keyed": true
+            }
+        }
+    }
+}
+'
+
+```
+
+### 缺省聚合
+
+基于字段数据的单个存储桶聚合，可在当前文档集上下文中创建所有缺少字段值（实际上是缺少字段或配置了NULL值）的所有文档的存储桶。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "products_without_a_price" : {
+            "missing" : { "field" : "price" }
+        }
+    }
+}
+'
+```
+
+### 嵌套聚合
+
+一种特殊的单存储桶聚合，可以聚合嵌套文档。
+
+定义数据格式
+
+```shell
+curl -X PUT "localhost:9200/products/_doc/0?pretty" -H 'Content-Type: application/json' -d'
+{
+  "name": "LED TV", 
+  "resellers": [
+    {
+      "reseller": "companyA",
+      "price": 350
+    },
+    {
+      "reseller": "companyB",
+      "price": 500
+    }
+  ]
+}
+'
+
+```
+
+插入一条记录
+
+```shell
+curl -X PUT "localhost:9200/products/_doc/0?pretty" -H 'Content-Type: application/json' -d'
+{
+  "name": "LED TV", 
+  "resellers": [
+    {
+      "reseller": "companyA",
+      "price": 350
+    },
+    {
+      "reseller": "companyB",
+      "price": 500
+    }
+  ]
+}
+'
+
+```
+
+使用嵌套聚合，取出经销商中出售价格最低的。
+
+```shell
+curl -X GET "localhost:9200/products/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "query" : {
+        "match" : { "name" : "led tv" }
+    },
+    "aggs" : {
+        "resellers" : {
+            "nested" : {
+                "path" : "resellers"
+            },
+            "aggs" : {
+                "min_price" : { "min" : { "field" : "resellers.price" } }
+            }
+        }
+    }
+}
+'
+```
+
+嵌套聚合要求嵌套文档在最顶层文档的`path`。
+
+### 父聚合
+
+一种特殊的单存储桶聚合，用于选择具有指定类型（在连接字段中定义）的父级文档。
+
+父聚合有一个单独的选项
+
+- `type`应该选中的子类型
+
+示例和子聚合的实例类似，父聚合使用如下
+
+```shell
+curl -X POST "localhost:9200/parent_example/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+  "aggs": {
+    "top-names": {
+      "terms": {
+        "field": "owner.display_name.keyword",
+        "size": 10
+      },
+      "aggs": {
+        "to-questions": {
+          "parent": {
+            "type" : "answer" 
+          },
+          "aggs": {
+            "top-tags": {
+              "terms": {
+                "field": "tags.keyword",
+                "size": 10
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+'
+
+```
+
+### 范围聚合
+
+基于多存储桶值源的聚合，使用户能够定义一组范围，每个范围代表一个桶。
+
+请注意，此聚合包括起始值，但不包括每个范围的起始值。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs": {
+        "price_range": {
+            "range": {
+                "field": "price",
+                "ranges": [
+                    {
+                        "to": 1000
+                    },
+                    {
+                        "from": 2000,
+                        "to": 2500
+                    },
+                    {
+                        "from": 3000
+                    }
+                ]
+            },
+            "aggs": {
+            	"price_stats": {
+            		"stats": {
+            			"field": "price"
+            		}
+            	}
+            }
+        }
+    }
+}
+'
+```
+
+### 稀有项聚合
+
+基于多桶值源的聚合，可找到“稀有”项-分布较长的项，并且不频繁。
+
+从概念上讲，这类似于`terms`聚合，按`_count`升序排序。
+
+`rare_terms`参数
+
+|   参数名称    |                     描述                     | 是否必填 | 默认值 |
+| :-----------: | :------------------------------------------: | :------: | :----: |
+|     field     |             用于稀有项聚合的字段             |    是    |        |
+| max_doc_count |             项应出现的最大文档数             |   可选   |   1    |
+|   percision   | 精度，精度越高占用内存越大，不能小于0.000001 |   可选   |  0.01  |
+|    include    |                 聚合包含的项                 |   可选   |        |
+|    exclude    |                聚合不包含的项                |   可选   |        |
+|    missing    |                    缺省值                    |   可选   |        |
+
+### 反向嵌套聚合
+
+一种特殊的单存储桶聚合，可以从嵌套文档中对父文档进行聚合。
+
+`reverse_nested`聚合必须在`nested`聚合内定义。
+
+`path`参数定义应嵌套的嵌套对象字段。默认是空。
+
+```shell
+# 定义数据结构
+curl -X PUT "localhost:9200/issues?pretty" -H 'Content-Type: application/json' -d'
+{
+    "mappings": {
+         "properties" : {
+             "tags" : { "type" : "keyword" },
+             "comments" : { 
+                 "type" : "nested",
+                 "properties" : {
+                     "username" : { "type" : "keyword" },
+                     "comment" : { "type" : "text" }
+                 }
+             }
+         }
+    }
+}
+'
+
+# 查询数据
+curl -X GET "localhost:9200/issues/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "query": {
+    "match_all": {}
+  },
+  "aggs": {
+    "comments": {
+      "nested": {
+        "path": "comments"
+      },
+      "aggs": {
+        "top_usernames": {
+          "terms": {
+            "field": "comments.username"
+          },
+          "aggs": {
+            "comment_to_issue": {
+              "reverse_nested": {}, 
+              "aggs": {
+                "top_tags_per_comment": {
+                  "terms": {
+                    "field": "tags"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+'
+
+```
+
+### 采样器聚合
+
+一种筛选聚合，用于将任何子聚合的处理限制为得分最高的文档样本。
+
+使用场景
+
+- 将分析重点放在高相关性匹配上，而不是低质量匹配的可能很长的尾部上。
+- 减少仅使用样本即可产生有用结果的聚合的运行成本。
+
+在StackOverflow数据上查询流行术语javascript或较罕见的术语kibana将匹配许多文档-大多数文档都缺少单词Kibana。使用采集器聚合收集比较精确的样本进行`significant_terms`聚合查询。
+
+```shell
+curl -X POST "localhost:9200/stackoverflow/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "query": {
+        "query_string": {
+            "query": "tags:kibana OR tags:javascript"
+        }
+    },
+    "aggs": {
+        "sample": {
+            "sampler": {
+                "shard_size": 200
+            },
+            "aggs": {
+                "keywords": {
+                    "significant_terms": {
+                        "field": "tags",
+                        "exclude": ["kibana", "javascript"]
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 重要项汇总
+
+重要项聚合返回集合中项出现感兴趣或异常的集合。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "query" : {
+        "terms" : {"force" : [ "British Transport Police" ]}
+    },
+    "aggregations" : {
+        "significant_crime_types" : {
+            "significant_terms" : { "field" : "crime_type" }
+        }
+    }
+}
+'
+```
+
+### 重要文本聚合
+
+重要文本聚合返回集中出现有趣或异常的自由文本术语。
+
+```shell
+curl -X GET "localhost:9200/news/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "query" : {
+        "match" : {"content" : "Bird flu"}
+    },
+    "aggregations" : {
+        "my_sample" : {
+            "sampler" : {
+                "shard_size" : 100
+            },
+            "aggregations": {
+                "keywords" : {
+                    "significant_text" : { "field" : "content" }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 项聚合
+
+基于多存储桶值源的聚合，其中动态构建桶，每个唯一项一个存储桶。
+
+```shell
+curl -X GET "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "aggs" : {
+        "genres" : {
+            "terms" : { "field" : "genre" } 
+        }
+    }
+}
+'
+```
+
+### 范围字段分桶的区别
+
+文件会针对它们进入的每个存储桶进行计数，范围字段可能落入多个存储桶，可能计数值会有偏差。
+
+查询范围不是聚合过滤器。下列查询的日期直方图聚合不会根据`query`的范围进行查询。
+
+```shell
+curl -X POST "localhost:9200/range_index/_search?size=0&pretty" -H 'Content-Type: application/json' -d'
+{
+    "query": {
+      "range": {
+        "time_frame": {
+          "gte": "2019-11-01",
+          "format": "yyyy-MM-dd"
+        }
+      }
+    },
+    "aggs" : {
+        "november_data" : {
+            "date_histogram" : {
+                "field" : "time_frame",
+                "calendar_interval" : "day",
+                "format": "yyyy-MM-dd"
+              }
+        }
+    }
+}
+'
+```
+
+
 
