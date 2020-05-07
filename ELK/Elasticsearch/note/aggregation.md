@@ -45,7 +45,7 @@
 
 ## 指标聚合
 
-此族中的聚合基于从要聚合的文档中以一种或另一种方式提取的值来计算指标。这些值通常从文档的字段中提取（使用字段数据），但是也可以使用脚本生成。
+此类聚合基于从要聚合的文档中以一种或另一种方式提取的值来计算指标。这些值通常从文档的字段中提取（使用字段数据），但是也可以使用脚本生成。
 
 数值指标聚合是一种特殊类型的指标聚合，可输出数值。
 
@@ -2340,7 +2340,7 @@ curl -X POST "localhost:9200/stackoverflow/_search?size=0&pretty" -H 'Content-Ty
 - 有限的重复数据删除逻辑。
 - 没有专门的地理/日期字段语法
 
-#### 过滤聚合
+### 过滤聚合
 
 定义当前文档集上下文中与指定过滤器匹配的所有文档的单个存储桶。
 
@@ -3099,6 +3099,786 @@ curl -X POST "localhost:9200/range_index/_search?size=0&pretty" -H 'Content-Type
               }
         }
     }
+}
+'
+```
+
+## 管道聚合
+
+管道聚合工作于其他聚合的产生的输出，添加信息到输出树中。
+
+管道聚合可以分为两类
+
+- 父管道聚合：它能够计算新的存储桶或新的聚合以添加到现有存储桶中。
+- 相邻管道聚合：它能够计算与该同级聚合处于同一级别的新聚合。
+
+管道聚合可以通过使用`buckets_path`参数指示所需指标的路径来应用执行计算所需的聚合。
+
+`buckets_path`参数语法
+
+```properties
+AGG_SEPARATOR       =  `>` ;
+METRIC_SEPARATOR    =  `.` ;
+AGG_NAME            =  <the name of the aggregation> ;
+METRIC              =  <the name of the metric (in case of multi-value metrics aggregation)> ;
+MULTIBUCKET_KEY     =  `[<KEY_NAME>]`
+PATH                =  <AGG_NAME><MULTIBUCKET_KEY>? (<AGG_SEPARATOR>, <AGG_NAME> )* ( <METRIC_SEPARATOR>, <METRIC> ) ;
+```
+
+例如，路径`my_bucket> my_stats.avg`将指向`my_stats`指标中的avg值，该值包含在`my_bucket`存储桶聚合中。
+
+管道聚合有两种方式处理数据中的空白，使用`gap_policy`参数指定处理方式
+
+- `skip`：选项将缺失数据视为存储桶不存在。
+- `insert_zeros`：选项将缺失数据处理为0。
+
+### 平均存储桶聚合
+
+平均存储桶聚合是相邻管道聚合。计算相邻聚合中指定指标的平均值。
+
+#### 语法
+
+`avg_bucket`聚合的参数
+
+|   参数名称   |        描述        | 是否必须 | 默认值 |
+| :----------: | :----------------: | :------: | :----: |
+| buckets_path |     存储桶路径     |    是    |        |
+|  gap_policy  | 处理空白数据的方式 |    否    |  skip  |
+|    format    |   聚合输出的格式   |    否    |  null  |
+
+```shell
+curl -X POST "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "size": 0,
+  "aggs": {
+    "sales_per_month": {
+      "date_histogram": {
+        "field": "date",
+        "calendar_interval": "month"
+      },
+      "aggs": {
+        "sales": {
+          "sum": {
+            "field": "price"
+          }
+        }
+      }
+    },
+    "avg_monthly_sales": {
+      "avg_bucket": {
+        "buckets_path": "sales_per_month>sales" 
+      }
+    }
+  }
+}
+'
+```
+
+### 导数聚合
+
+导数聚合是父管道聚合。用于计算父聚合（或直方图）聚合特定指标的导数。
+
+特定指标必须是数字，并且封闭的直方图必须将min_doc_count设置为0（直方图聚合的默认设置）。
+
+#### 一阶导数
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                },
+                "sales_deriv": {
+                    "derivative": {
+                        "buckets_path": "sales" 
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+#### 二阶导数
+
+以通过将导数管线聚合链接到另一个导数管线聚合的结果来计算二阶导数。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                },
+                "sales_deriv": {
+                    "derivative": {
+                        "buckets_path": "sales"
+                    }
+                },
+                "sales_2nd_deriv": {
+                    "derivative": {
+                        "buckets_path": "sales_deriv" 
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+#### 单位
+
+导数聚合允许导数值指定单位。会返回`normalized_value`值报告x坐标单位的导数值。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                },
+                "sales_deriv": {
+                    "derivative": {
+                        "buckets_path": "sales",
+                        "unit": "day" 
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 最大存储桶聚合
+
+最大存储桶聚合是相邻管道聚合。在相邻聚合中使用指定指标的最大值标识存储桶，并输出存储桶的键和值。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                }
+            }
+        },
+        "max_monthly_sales": {
+            "max_bucket": {
+                "buckets_path": "sales_per_month>sales" 
+            }
+        }
+    }
+}
+'
+```
+
+### 最小存储桶聚合
+
+最小存储桶聚合是相邻管道聚合。在相邻聚合中使用指定指标的最小值标识存储桶，并输出存储桶的键和值。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                }
+            }
+        },
+        "min_monthly_sales": {
+            "min_bucket": {
+                "buckets_path": "sales_per_month>sales" 
+            }
+        }
+    }
+}
+'
+```
+
+### 总和存储桶聚合
+
+总和存储同聚合是相邻管道聚合。用于计算同级聚合中指定指标的所有存储区之间的总和。指定的指标必须是数字，并且同级聚合必须是多桶聚合。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                }
+            }
+        },
+        "sum_monthly_sales": {
+            "sum_bucket": {
+                "buckets_path": "sales_per_month>sales" 
+            }
+        }
+    }
+}
+'
+```
+
+### 统计存储桶聚合
+
+相邻管道聚合。可以在相邻聚合中跨指定指标的所有存储桶计算各种统计信息。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                }
+            }
+        },
+        "stats_monthly_sales": {
+            "stats_bucket": {
+                "buckets_path": "sales_per_month>sales" 
+            }
+        }
+    }
+}
+'
+```
+
+### 扩展统计存储桶聚合
+
+相邻管道聚合。可以在相邻聚合中跨指定指标的所有存储桶计算各种统计信息。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                }
+            }
+        },
+        "stats_monthly_sales": {
+            "extended_stats_bucket": {
+                "buckets_path": "sales_per_month>sales" 
+            }
+        }
+    }
+}
+'
+```
+
+### 百分位存储桶聚合
+
+相邻管道聚合。用于计算同级聚合中指定指标的所有存储桶的百分比。
+
+`percentiles_bucket`聚合的参数
+
+|   参数名称   |                   描述                   | 是否必须 |            默认值            |
+| :----------: | :--------------------------------------: | :------: | :--------------------------: |
+| buckets_path |                存储桶路径                |    是    |                              |
+|  gap_policy  |            处理空白数据的方式            |    否    |             skip             |
+|    format    |              聚合输出的格式              |    否    |             null             |
+|   percents   |           要计算的百分位数列表           |    否    | [ 1, 5, 25, 50, 75, 95, 99 ] |
+|    keyed     | 该标志将范围作为哈希而不是键值对数组返回 |    否    |             true             |
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                }
+            }
+        },
+        "percentiles_monthly_sales": {
+            "percentiles_bucket": {
+                "buckets_path": "sales_per_month>sales", 
+                "percents": [ 25.0, 50.0, 75.0 ] 
+            }
+        }
+    }
+}
+'
+```
+
+### 移动平均聚合
+
+给定一系列有序的数据，移动平均聚合将在数据上滑动一个窗口并发出该窗口的平均值。
+
+`moving_avg`聚合的参数如下
+
+|   参数名称   |                       描述                       | 是否必须 |      默认值       |
+| :----------: | :----------------------------------------------: | :------: | :---------------: |
+| buckets_path |                    存储桶路径                    |    是    |                   |
+|  gap_policy  |                处理空白数据的方式                |    否    |       skip        |
+|    format    |                  聚合输出的格式                  |    否    |       null        |
+|    model     |          我们希望使用的移动平均权重模型          |    否    |      simple       |
+|    window    |          要在直方图中“滑动”的窗口的大小          |    否    |         5         |
+|   minimize   |             如果模型应在算法上最小化             |    否    | 大多数模型为false |
+|   settings   | 特定于模型的设置，其内容根据指定的模型而有所不同 |    否    |                   |
+
+`moving_avg`聚合必须嵌套在`histogram`或者是`date_histogram`聚合中
+
+### 移动函数聚合
+
+给定一系列有序数据，移动功能聚合将在数据上滑动一个窗口，并允许用户指定在每个数据窗口上执行的自定义脚本。
+
+`moving_fn`聚合的参数
+
+|   参数名称   |              描述              | 是否必须 | 默认值 |
+| :----------: | :----------------------------: | :------: | :----: |
+| buckets_path |           存储桶路径           |    是    |        |
+|    window    | 要在直方图中“滑动”的窗口的大小 |    否    |   5    |
+|    script    |    在每个窗口需要执行的脚本    |    是    |        |
+|    shift     |          窗口位置偏移          |    否    |   0    |
+
+`moving_fn`聚合必须嵌套在`histogram`或者是`date_histogram`聚合中
+
+```shell
+curl -X POST "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs": {
+        "my_date_histo":{                
+            "date_histogram":{
+                "field":"date",
+                "calendar_interval":"1M"
+            },
+            "aggs":{
+                "the_sum":{
+                    "sum":{ "field": "price" } 
+                },
+                "the_movfn": {
+                    "moving_fn": {
+                        "buckets_path": "the_sum", 
+                        "window": 10,
+                        "script": "MovingFunctions.unweightedAvg(values)"
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+#### 用户自定义脚本
+
+```shell
+curl -X POST "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs": {
+        "my_date_histo":{
+            "date_histogram":{
+                "field":"date",
+                "calendar_interval":"1M"
+            },
+            "aggs":{
+                "the_sum":{
+                    "sum":{ "field": "price" }
+                },
+                "the_movavg": {
+                    "moving_fn": {
+                        "buckets_path": "the_sum",
+                        "window": 10,
+                        "script": "return values.length > 0 ? values[0] : Double.NaN"
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+#### 预定义函数
+
+`moving_fn`脚本上下文于定义了许多函数
+
+- `max()`
+- `min()`
+- `sum()`
+- `stdDev()`
+- `unweightedAvg()`
+- `linearWeightedAvg()`
+- `ewma()`
+- `holt()`
+- `holtWinters()`
+
+### 累积求和聚合
+
+累积求和聚合是一个父管道聚合。用于计算父直方图（或日期直方图）聚合中指定指标的累积总和。
+
+指定的指标必须是数字，并且包围的直方图必须将`min_doc_count`设置为0。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                },
+                "cumulative_sales": {
+                    "cumulative_sum": {
+                        "buckets_path": "sales" 
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 累积基数聚合
+
+累积基数聚合是一个父管道聚合。用于计算父直方图（或日期直方图）聚合中指定指标的累积总和。
+
+指定的指标必须是基数聚合，并且封闭的直方图必须将`min_doc_count`设置为0（直方图聚合的默认设置）。
+
+```shell
+curl -X GET "localhost:9200/user_hits/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "users_per_day" : {
+            "date_histogram" : {
+                "field" : "timestamp",
+                "calendar_interval" : "day"
+            },
+            "aggs": {
+                "distinct_users": {
+                    "cardinality": {
+                        "field": "user_id"
+                    }
+                },
+                "total_new_users": {
+                    "cumulative_cardinality": {
+                        "buckets_path": "distinct_users" 
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 存储桶脚本聚合
+
+存储桶脚本聚合是父管道聚合执行脚本，该脚本可以在父多桶聚合中的指定指标上按桶进行计算。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "total_sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                },
+                "t-shirts": {
+                  "filter": {
+                    "term": {
+                      "type": "t-shirt"
+                    }
+                  },
+                  "aggs": {
+                    "sales": {
+                      "sum": {
+                        "field": "price"
+                      }
+                    }
+                  }
+                },
+                "t-shirt-percentage": {
+                    "bucket_script": {
+                        "buckets_path": {
+                          "tShirtSales": "t-shirts>sales",
+                          "totalSales": "total_sales"
+                        },
+                        "script": "params.tShirtSales / params.totalSales * 100"
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 存储桶选择器聚合
+
+存储桶选择器聚合是执行脚本的父管道聚合。该脚本确定当前存储桶是否将保留在父多存储桶聚合中。指定的指标必须为数字，并且脚本必须返回布尔值。
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "total_sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                },
+                "sales_bucket_filter": {
+                    "bucket_selector": {
+                        "buckets_path": {
+                          "totalSales": "total_sales"
+                        },
+                        "script": "params.totalSales > 200"
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 存储桶排序聚合
+
+存储桶排序聚合是父管道聚合。对其父多存储桶聚合进行排序。可以指定零个或多个排序字段以及相应的排序顺序。
+
+每个存储桶的排序基于`_key`，`_count`或其子聚合排序。
+
+`bucket_sort`聚合的参数
+
+|  参数名称  |                        描述                        | 是否必须 | 默认值 |
+| :--------: | :------------------------------------------------: | :------: | :----: |
+|    sort    |                   需要排序的字段                   |    否    |        |
+|    from    | 设置值之前的位置的存储桶将被截断，即从from开始排序 |    否    |   0    |
+|    size    |  存储桶返回的数量，默认是返回父聚合中的所有存储桶  |    否    |        |
+| gap_policy |                 处理空白数据的方式                 |    否    |  skip  |
+
+```shell
+curl -X POST "localhost:9200/sales/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+    "size": 0,
+    "aggs" : {
+        "sales_per_month" : {
+            "date_histogram" : {
+                "field" : "date",
+                "calendar_interval" : "month"
+            },
+            "aggs": {
+                "total_sales": {
+                    "sum": {
+                        "field": "price"
+                    }
+                },
+                "sales_bucket_sort": {
+                    "bucket_sort": {
+                        "sort": [
+                          {"total_sales": {"order": "desc"}}
+                        ],
+                        "size": 3
+                    }
+                }
+            }
+        }
+    }
+}
+'
+```
+
+### 串行差分聚合
+
+串行差分是一种在不同的时滞或周期从其自身中减去时间序列中的值的技术。例如数据点$f(x)=f(x_t)-f(x_{t-n})$，其中$n$是周期。
+
+`serial_diff`聚合的参数
+
+|   参数名称   |                   描述                   | 是否必须 | 默认值 |
+| :----------: | :--------------------------------------: | :------: | :----: |
+| buckets_path |                存储桶路径                |    是    |        |
+|  gap_policy  |            处理空白数据的方式            |    否    |  skip  |
+|    format    |              聚合输出的格式              |    否    |  null  |
+|     lag      | 从当前值中减去的历史存储区，必须是正整数 |    否    |   1    |
+
+`serial_diff`聚合必须嵌套在`histogram`聚合或者是`date_histogram`聚合中使用
+
+```shell
+curl -X POST "localhost:9200/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+   "size": 0,
+   "aggs": {
+      "my_date_histo": {                  
+         "date_histogram": {
+            "field": "timestamp",
+            "calendar_interval": "day"
+         },
+         "aggs": {
+            "the_sum": {
+               "sum": {
+                  "field": "lemmings"     
+               }
+            },
+            "thirtieth_difference": {
+               "serial_diff": {                
+                  "buckets_path": "the_sum",
+                  "lag" : 30
+               }
+            }
+         }
+      }
+   }
+}
+'
+```
+
+## 只返回聚合结果
+
+在许多情况下，需要聚合结果但不需要搜索匹配。对于这些情况，可以通过设置`size = 0`忽略匹配。使得请求更高效。
+
+## 聚合元数据
+
+您可以在请求时将一段元数据与单个聚合相关联，这些元数据将在响应时返回。
+
+```shell
+curl -X GET "localhost:9200/twitter/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "size": 0,
+  "aggs": {
+    "titles": {
+      "terms": {
+        "field": "title"
+      },
+      "meta": {
+        "color": "blue"
+      }
+    }
+  }
+}
+'
+```
+
+## 返回聚合的类型
+
+有时候需要知道聚合的类型，可以使用`typed_keys`参数可用于更改响应中的聚合名称，以便以其内部类型作为前缀，如`stats_bucket#`前缀。
+
+```shell
+curl -X GET "localhost:9200/twitter/_search?typed_keys&pretty" -H 'Content-Type: application/json' -d'
+{
+  "aggregations": {
+    "tweets_over_time": {
+      "date_histogram": {
+        "field": "date",
+        "calendar_interval": "year"
+      },
+      "aggregations": {
+        "top_users": {
+            "top_hits": {
+                "size": 1
+            }
+        }
+      }
+    }
+  }
 }
 '
 ```
